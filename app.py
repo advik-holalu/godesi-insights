@@ -129,6 +129,64 @@ def explode_multiselect(df, col):
     return tmp[tmp[col] != ""]
 
 # =====================================================
+# UNMAPPED AUDIT (TERMINAL)
+# =====================================================
+
+def print_unmapped_report(df_src, raw_col, norm_col, label, id_cols=None, top_n=20):
+    """
+    Prints unmapped responses to terminal.
+    Unmapped = raw has value but norm is NaN/None.
+    """
+    if id_cols is None:
+        id_cols = []
+
+    tmp = df_src.copy()
+
+    # keep only rows with non-empty raw value
+    tmp = tmp[tmp[raw_col].notna()]
+    tmp = tmp[tmp[raw_col].astype(str).str.strip() != ""]
+
+    # unmapped = norm is null
+    unmapped = tmp[tmp[norm_col].isna()].copy()
+
+    if unmapped.empty:
+        print(f"✅ [{label}] No unmapped responses.")
+        return
+
+    print("\n" + "="*80)
+    print(f"❗ UNMAPPED REPORT: {label}")
+    print(f"Raw column: {raw_col}")
+    print(f"Total unmapped rows: {len(unmapped)}")
+    print("="*80)
+
+    # print top unmapped values
+    value_counts = (
+        unmapped[raw_col]
+        .astype(str)
+        .str.strip()
+        .value_counts()
+        .head(top_n)
+    )
+
+    print("\nTop Unmapped Responses:")
+    for val, cnt in value_counts.items():
+        print(f"  ({cnt}) {val}")
+
+    # print row-level details (first 50 rows)
+    print("\nSample Row-level Unmapped Entries (first 50):")
+    cols_to_print = id_cols + [raw_col]
+    cols_to_print = [c for c in cols_to_print if c in unmapped.columns]
+
+    for idx, row in unmapped[cols_to_print].head(50).iterrows():
+        row_meta = " | ".join([f"{c}={row[c]}" for c in cols_to_print if c != raw_col])
+        print(f"RowIndex={idx} | {row_meta} | UNMAPPED_VALUE={row[raw_col]}")
+
+    # optionally export all unmapped rows to CSV
+    out_csv = f"unmapped_{label.lower().replace(' ', '_')}.csv"
+    unmapped[cols_to_print].to_csv(out_csv, index=True)
+    print(f"\n📁 Exported unmapped rows to: {out_csv}")
+
+# =====================================================
 # NORMALIZATION RULES
 # =====================================================
 
@@ -247,8 +305,8 @@ INVALID_CONSUMPTION_MOMENTS = {
 # ---- Column I: Perception ----
 PERCEPTION_MAP = {
     # Candy / Lollipop
-    "candy": "Candy / Lollipop",
-    "lollipop": "Candy / Lollipop",
+    "candy": "Candy",
+    "lollipop": "Lollipop",
 
     # Tangy / Chatpata
     "tangy": "Tangy / Chatpata Treat",
@@ -561,6 +619,17 @@ INVALID_OCCASIONS = {
 # DATA TRANSFORMATION PIPELINE
 # =====================================================
 
+def safe_text(x):
+    """
+    Converts anything into a safe lowercase trimmed string.
+    - NaN/None -> ""
+    - numbers -> "123"
+    - normal string -> "clean lowercase string"
+    """
+    if pd.isna(x):
+        return ""
+    return str(x).strip().lower()
+
 df = df_raw.copy()
 
 # ---- Age ----
@@ -638,10 +707,14 @@ df_perception[perception_col] = df_perception[perception_col].map(clean_text)
 df_perception = explode_multiselect(df_perception, perception_col)
 
 def map_perception(x):
-    x = x.lower()
+    x_low = safe_text(x)
+    if x_low == "":
+        return None
+
     for k, v in PERCEPTION_MAP.items():
-        if k in x:
+        if k in x_low:
             return v
+
     return None
 
 df_perception["perception_norm"] = df_perception[perception_col].apply(map_perception)
@@ -659,10 +732,14 @@ df_motivation[motivation_col] = df_motivation[motivation_col].map(clean_text)
 df_motivation = explode_multiselect(df_motivation, motivation_col)
 
 def map_motivation(x):
-    x = x.lower()
+    x_low = safe_text(x)
+    if x_low == "":
+        return None
+
     for k, v in MOTIVATION_MAP.items():
-        if k in x:
+        if k in x_low:
             return v
+
     return None
 
 df_motivation["motivation_norm"] = df_motivation[motivation_col].apply(map_motivation)
@@ -691,7 +768,9 @@ df_brand[brand_col] = df_brand[brand_col].map(clean_text)
 df_brand = explode_multiselect(df_brand, brand_col)
 
 def map_brand_awareness(x):
-    x_low = x.lower()
+    x_low = safe_text(x)
+    if x_low == "":
+        return None
 
     # drop invalid
     if x_low in INVALID_BRAND_RESPONSES:
@@ -725,7 +804,9 @@ df_top3[top3_col] = df_top3[top3_col].map(clean_text)
 df_top3 = explode_multiselect(df_top3, top3_col)
 
 def map_spontaneous_brand(x):
-    x_low = x.lower()
+    x_low = safe_text(x)
+    if x_low == "":
+        return None
 
     # drop invalid statements
     if x_low in SPONTANEOUS_INVALID:
@@ -756,7 +837,9 @@ df_pref = df.copy()
 df_pref[preference_col] = df_pref[preference_col].map(clean_text)
 
 def map_preference_brand(x):
-    x_low = x.lower()
+    x_low = safe_text(x)
+    if x_low == "":
+        return None
 
     if x_low in INVALID_PREFERENCE:
         return None
@@ -775,7 +858,9 @@ df_freq = df.copy()
 df_freq[freq_col] = df_freq[freq_col].map(clean_text)
 
 def map_frequency(x):
-    x_low = x.lower()
+    x_low = safe_text(x)
+    if x_low == "":
+        return None
 
     if x_low in INVALID_FREQUENCY:
         return None
@@ -795,7 +880,9 @@ df_occ[occasion_col] = df_occ[occasion_col].map(clean_text)
 df_occ = explode_multiselect(df_occ, occasion_col)
 
 def map_occasion(x):
-    x_low = x.lower()
+    x_low = safe_text(x)
+    if x_low == "":
+        return None
 
     if x_low in INVALID_OCCASIONS:
         return None
@@ -998,6 +1085,37 @@ with tabs[2]:
 
         st.altair_chart(chart_occ, use_container_width=True)
 
+    st.markdown("---")
+    st.subheader("Age Group vs Consumption Context")
+
+    # prepare heatmap data
+    heat_df = (
+        df_moment
+        .groupby([age_col, "moment_norm"])
+        .size()
+        .reset_index(name="Count")
+    )
+
+    heatmap = alt.Chart(heat_df).mark_rect().encode(
+        x=alt.X("moment_norm:N", title="Consumption Moment"),
+        y=alt.Y(f"{age_col}:N", title="Age Group"),
+        color=alt.Color("Count:Q", scale=alt.Scale(scheme="yelloworangebrown")),
+        tooltip=[age_col, "moment_norm", "Count"]
+    )
+
+    text = alt.Chart(heat_df).mark_text(baseline="middle").encode(
+        x="moment_norm:N",
+        y=f"{age_col}:N",
+        text="Count:Q",
+        color=alt.condition(
+            alt.datum.Count > 0,
+            alt.value("black"),
+            alt.value("transparent")
+        )
+    )
+
+    st.altair_chart((heatmap + text), use_container_width=True)
+
 # =====================================================
 # TAB 4 — PERCEPTION
 # =====================================================
@@ -1043,6 +1161,36 @@ with tabs[4]:
     )
 
     st.altair_chart(chart, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("Age Group vs Purchase Motivation")
+
+    mot_heat_df = (
+        df_motivation
+        .groupby([age_col, "motivation_norm"])
+        .size()
+        .reset_index(name="Count")
+    )
+
+    mot_heatmap = alt.Chart(mot_heat_df).mark_rect().encode(
+        x=alt.X("motivation_norm:N", title="Motivation"),
+        y=alt.Y(f"{age_col}:N", title="Age Group"),
+        color=alt.Color("Count:Q", scale=alt.Scale(scheme="tealblues")),
+        tooltip=[age_col, "motivation_norm", "Count"]
+    )
+
+    mot_text = alt.Chart(mot_heat_df).mark_text(baseline="middle").encode(
+        x="motivation_norm:N",
+        y=f"{age_col}:N",
+        text="Count:Q",
+        color=alt.condition(
+            alt.datum.Count > 0,
+            alt.value("black"),
+            alt.value("transparent")
+        )
+    )
+
+    st.altair_chart((mot_heatmap + mot_text), use_container_width=True)
 
 # =====================================================
 # TAB — SWEETS AWARENESS
@@ -1112,4 +1260,19 @@ with tabs[7]:
     )
 
     st.altair_chart(chart, use_container_width=True)
+
+    # =====================================================
+    # % AWARE OF SWEETS PORTFOLIO
+    # =====================================================
+    yes_count = (df_linkage[linkage_col] == "Yes").sum()
+    no_count = (df_linkage[linkage_col] == "No").sum()
+    total_linkage = yes_count + no_count
+
+    pct_yes = round((yes_count / total_linkage) * 100, 1) if total_linkage else 0
+
+    st.markdown("---")
+    st.markdown(
+        f"**{pct_yes}%** of respondents know that **GO DESi also makes Indian sweets** "
+        f"(Yes: {yes_count}, No: {no_count})"
+    )
 
