@@ -62,7 +62,7 @@ COLS = {
     # Column G
     "frequency": "how often does the customer eat desi popz",
 
-    # Column H (THIS WAS MISSING EARLIER)
+    # Column H
     "consumption_moment": "when does the customer usually eat desi popz",
 
     # Column I
@@ -121,11 +121,26 @@ def clean_text(x):
         return None
     return re.sub(r"\s+", " ", str(x)).strip()
 
+def safe_text(x):
+    """
+    Converts anything into a safe lowercase trimmed string.
+    - NaN/None -> ""
+    - numbers -> "123"
+    - normal string -> "clean lowercase string"
+    """
+    if pd.isna(x):
+        return ""
+    return str(x).strip().lower()
+
 def explode_multiselect(df, col):
+    """
+    Handles comma-separated multiselect answers safely.
+    Example: "Instagram, Friend" -> 2 rows.
+    """
     tmp = df.copy()
     tmp[col] = tmp[col].dropna().astype(str).str.split(",")
     tmp = tmp.explode(col)
-    tmp[col] = tmp[col].str.strip()
+    tmp[col] = tmp[col].astype(str).str.strip()
     return tmp[tmp[col] != ""]
 
 # =====================================================
@@ -153,11 +168,11 @@ def print_unmapped_report(df_src, raw_col, norm_col, label, id_cols=None, top_n=
         print(f"✅ [{label}] No unmapped responses.")
         return
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(f"❗ UNMAPPED REPORT: {label}")
     print(f"Raw column: {raw_col}")
     print(f"Total unmapped rows: {len(unmapped)}")
-    print("="*80)
+    print("=" * 80)
 
     # print top unmapped values
     value_counts = (
@@ -172,7 +187,7 @@ def print_unmapped_report(df_src, raw_col, norm_col, label, id_cols=None, top_n=
     for val, cnt in value_counts.items():
         print(f"  ({cnt}) {val}")
 
-    # print row-level details (first 50 rows)
+    # print row-level details
     print("\nSample Row-level Unmapped Entries (first 50):")
     cols_to_print = id_cols + [raw_col]
     cols_to_print = [c for c in cols_to_print if c in unmapped.columns]
@@ -181,10 +196,11 @@ def print_unmapped_report(df_src, raw_col, norm_col, label, id_cols=None, top_n=
         row_meta = " | ".join([f"{c}={row[c]}" for c in cols_to_print if c != raw_col])
         print(f"RowIndex={idx} | {row_meta} | UNMAPPED_VALUE={row[raw_col]}")
 
-    # optionally export all unmapped rows to CSV
+    # export all unmapped rows to CSV
     out_csv = f"unmapped_{label.lower().replace(' ', '_')}.csv"
     unmapped[cols_to_print].to_csv(out_csv, index=True)
     print(f"\n📁 Exported unmapped rows to: {out_csv}")
+
 
 # =====================================================
 # NORMALIZATION RULES
@@ -356,7 +372,7 @@ INVALID_PERCEPTION = {
     "",
 }
 
-# ---- Column J: Motivation Mapping ----
+# ---- Column J: Motivation ----
 MOTIVATION_MAP = {
     "better ingredient": "Better Ingredients",
     "natural": "Natural / Clean Label",
@@ -395,9 +411,8 @@ INVALID_MOTIVATION = {
     "",
 }
 
-# ---- Column L: Other Packaged Indian Sweet Brands (Top of Mind) ----
+# ---- Column L: Other Packaged Indian Sweet Brands ----
 BRAND_AWARENESS_MAP = {
-    # National brands
     "haldiram": "Haldiram",
     "haldirams": "Haldiram",
     "halidiram": "Haldiram",
@@ -471,7 +486,7 @@ PRODUCT_ONLY_KEYWORDS = [
     "sweetcorn",
 ]
 
-# ---- Column M: Top 3 Brands (Spontaneous Recall) ----
+# ---- Column M: Top 3 Brands ----
 SPONTANEOUS_BRAND_MAP = {
     "haldiram": "Haldiram",
     "haldirams": "Haldiram",
@@ -619,40 +634,35 @@ INVALID_OCCASIONS = {
 # DATA TRANSFORMATION PIPELINE
 # =====================================================
 
-def safe_text(x):
-    """
-    Converts anything into a safe lowercase trimmed string.
-    - NaN/None -> ""
-    - numbers -> "123"
-    - normal string -> "clean lowercase string"
-    """
-    if pd.isna(x):
-        return ""
-    return str(x).strip().lower()
-
 df = df_raw.copy()
 
 # ---- Age ----
 df[age_col] = df[age_col].map(clean_text)
-df = df[~df[age_col].isin(["N/A", "Not responded"])]
+df = df[df[age_col].notna()]
+df = df[~df[age_col].astype(str).str.strip().str.lower().isin(["n/a", "not responded", ""])]
 
 # ---- Gender ----
 df[gender_col] = df[gender_col].map(clean_text)
-df = df[~df[gender_col].isin(["Not responded"])]
+df = df[df[gender_col].notna()]
+df = df[~df[gender_col].astype(str).str.strip().str.lower().isin(["not responded", ""])]
 
 # ---- When first heard ----
 df[heard_when_col] = df[heard_when_col].map(clean_text)
-df = df[~df[heard_when_col].str.lower().isin(INVALID_HEARD_WHEN)]
+df = df[df[heard_when_col].notna()]
+df = df[~df[heard_when_col].astype(str).str.strip().str.lower().isin(INVALID_HEARD_WHEN)]
 
 # ---- Product Category (explode BOTH) ----
 def expand_product(x):
-    if x == "Both":
+    x = clean_text(x)
+    if x is None:
+        return None
+    if str(x).strip().lower() == "both":
         return ["Sweets", "Confectionery and Mints"]
     return [x]
 
 df_product = df.copy()
-df_product[product_col] = df_product[product_col].map(clean_text)
 df_product[product_col] = df_product[product_col].apply(expand_product)
+df_product = df_product.dropna(subset=[product_col])
 df_product = df_product.explode(product_col)
 
 # ---- Discovery Channel ----
@@ -662,42 +672,41 @@ df_disc[discovery_col] = df_disc[discovery_col].map(clean_text)
 df_disc = explode_multiselect(df_disc, discovery_col)
 df_disc["discovery_norm"] = (
     df_disc[discovery_col]
+    .astype(str)
     .str.lower()
     .map(DISCOVERY_MAP)
 )
 
-df_disc = df_disc[~df_disc[discovery_col].str.lower().isin(INVALID_DISCOVERY)]
+df_disc = df_disc[
+    ~df_disc[discovery_col].astype(str).str.lower().isin(INVALID_DISCOVERY)
+]
 df_disc = df_disc.dropna(subset=["discovery_norm"])
 
 # ---- Consumption Frequency (Column G) ----
 df[frequency_col] = df[frequency_col].map(clean_text)
-
+df = df[df[frequency_col].notna()]
 df = df[
-    ~df[frequency_col].str.lower().isin(
+    ~df[frequency_col].astype(str).str.strip().str.lower().isin(
         ["not responded", "not sure", ""]
     )
 ]
 
 # ---- Consumption Moment (Column H) ----
 df_moment = df.copy()
-
 df_moment[moment_col] = df_moment[moment_col].map(clean_text)
 
-# explode multi-select (comma-separated)
 df_moment = explode_multiselect(df_moment, moment_col)
 
-# normalize
 df_moment["moment_norm"] = (
     df_moment[moment_col]
+    .astype(str)
     .str.lower()
     .map(CONSUMPTION_MOMENT_MAP)
 )
 
-# drop junk
 df_moment = df_moment[
-    ~df_moment[moment_col].str.lower().isin(INVALID_CONSUMPTION_MOMENTS)
+    ~df_moment[moment_col].astype(str).str.lower().isin(INVALID_CONSUMPTION_MOMENTS)
 ]
-
 df_moment = df_moment.dropna(subset=["moment_norm"])
 
 # ---- Perception (Column I) ----
@@ -720,9 +729,8 @@ def map_perception(x):
 df_perception["perception_norm"] = df_perception[perception_col].apply(map_perception)
 
 df_perception = df_perception[
-    ~df_perception[perception_col].str.lower().isin(INVALID_PERCEPTION)
+    ~df_perception[perception_col].astype(str).str.lower().isin(INVALID_PERCEPTION)
 ]
-
 df_perception = df_perception.dropna(subset=["perception_norm"])
 
 # ---- Motivation (Column J) ----
@@ -745,62 +753,50 @@ def map_motivation(x):
 df_motivation["motivation_norm"] = df_motivation[motivation_col].apply(map_motivation)
 
 df_motivation = df_motivation[
-    ~df_motivation[motivation_col].str.lower().isin(INVALID_MOTIVATION)
+    ~df_motivation[motivation_col].astype(str).str.lower().isin(INVALID_MOTIVATION)
 ]
-
 df_motivation = df_motivation.dropna(subset=["motivation_norm"])
 
 # ---- Brand Linkage (Column K) ----
 df_linkage = df.copy()
 df_linkage[linkage_col] = df_linkage[linkage_col].map(clean_text)
-
-df_linkage = df_linkage[
-    df_linkage[linkage_col].isin(["Yes", "No"])
-]
+df_linkage = df_linkage[df_linkage[linkage_col].isin(["Yes", "No"])]
 
 # ---- Column L: Brand Awareness ----
-brand_col = find_col("other_packaged_brands")
-
 df_brand = df.copy()
-df_brand[brand_col] = df_brand[brand_col].map(clean_text)
+df_brand[other_brand_col] = df_brand[other_brand_col].map(clean_text)
 
-# explode multi-select
-df_brand = explode_multiselect(df_brand, brand_col)
+df_brand = explode_multiselect(df_brand, other_brand_col)
 
 def map_brand_awareness(x):
     x_low = safe_text(x)
     if x_low == "":
         return None
 
-    # drop invalid
     if x_low in INVALID_BRAND_RESPONSES:
         return None
 
-    # drop product-only answers
     for p in PRODUCT_ONLY_KEYWORDS:
         if p in x_low:
             return None
 
-    # map known brands
     for k, v in BRAND_AWARENESS_MAP.items():
         if k in x_low:
             return v
 
-    # local brands bucket
     for kw in LOCAL_BRAND_KEYWORDS:
         if kw in x_low:
             return "Local / Unbranded Sweets"
 
     return None
 
-df_brand["brand_awareness_norm"] = df_brand[brand_col].apply(map_brand_awareness)
+df_brand["brand_awareness_norm"] = df_brand[other_brand_col].apply(map_brand_awareness)
 df_brand = df_brand.dropna(subset=["brand_awareness_norm"])
 
-# ---- Column M: Spontaneous Recall ----
+# ---- Column M: Spontaneous Recall (Top 3) ----
 df_top3 = df.copy()
 df_top3[top3_col] = df_top3[top3_col].map(clean_text)
 
-# explode comma-separated brands
 df_top3 = explode_multiselect(df_top3, top3_col)
 
 def map_spontaneous_brand(x):
@@ -808,21 +804,17 @@ def map_spontaneous_brand(x):
     if x_low == "":
         return None
 
-    # drop invalid statements
     if x_low in SPONTANEOUS_INVALID:
         return None
 
-    # drop product-only mentions
     for p in SPONTANEOUS_PRODUCT_KEYWORDS:
         if p in x_low:
             return None
 
-    # canonical brand mapping
     for k, v in SPONTANEOUS_BRAND_MAP.items():
         if k in x_low:
             return v
 
-    # local brand bucket
     for kw in SPONTANEOUS_LOCAL_KEYWORDS:
         if kw in x_low:
             return "Local / Unbranded Sweets"
@@ -853,7 +845,7 @@ def map_preference_brand(x):
 df_pref["preferred_brand_norm"] = df_pref[preference_col].apply(map_preference_brand)
 df_pref = df_pref.dropna(subset=["preferred_brand_norm"])
 
-# ---- Column O: Consumption Frequency ----
+# ---- Column O: Consumption Frequency (Packaged sweets) ----
 df_freq = df.copy()
 df_freq[freq_col] = df_freq[freq_col].map(clean_text)
 
@@ -898,63 +890,14 @@ df_occ = df_occ.dropna(subset=["occasion_norm"])
 
 
 # =====================================================
-# GLOBAL KPI STRIP (EXECUTIVE SUMMARY)
+# KPI (ONLY TOTAL RESPONDENTS)
 # =====================================================
-
-# Base respondent count (after age filter applied later)
 total_respondents = df.shape[0]
 
-# % consuming packaged sweets
-# (exclude non-consumers from frequency df)
-consumers_count = df_freq.shape[0]
-pct_consumers = round((consumers_count / total_respondents) * 100, 1) if total_respondents else 0
-
-# % aware of GO DESi (Column L)
-aware_go_desi = (
-    df_brand["brand_awareness_norm"]
-    .eq("GO DESi")
-    .sum()
+st.metric(
+    label="Total Respondents",
+    value=f"{total_respondents}"
 )
-pct_aware_go_desi = round((aware_go_desi / df_brand.shape[0]) * 100, 1) if df_brand.shape[0] else 0
-
-# % preferring GO DESi (Column N)
-prefer_go_desi = (
-    df_pref["preferred_brand_norm"]
-    .eq("GO DESi")
-    .sum()
-)
-pct_prefer_go_desi = round((prefer_go_desi / df_pref.shape[0]) * 100, 1) if df_pref.shape[0] else 0
-
-
-# =====================================================
-# KPI DISPLAY
-# =====================================================
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
-with kpi1:
-    st.metric(
-        label="Total Respondents",
-        value=f"{total_respondents}"
-    )
-
-with kpi2:
-    st.metric(
-        label="% Consuming Packaged Sweets",
-        value=f"{pct_consumers}%"
-    )
-
-with kpi3:
-    st.metric(
-        label="% Aware of GO DESi",
-        value=f"{pct_aware_go_desi}%"
-    )
-
-with kpi4:
-    st.metric(
-        label="% Preferring GO DESi",
-        value=f"{pct_prefer_go_desi}%"
-    )
-
 
 st.markdown("---")
 
@@ -962,14 +905,13 @@ st.markdown("---")
 # =====================================================
 # APPLY SIDEBAR FILTERS CONSISTENTLY
 # =====================================================
-
 with st.sidebar:
     st.header("Filters")
 
     age_values = (
         df[age_col]
-        .dropna()          # remove None
-        .astype(str)       # ensure consistent type
+        .dropna()
+        .astype(str)
         .unique()
     )
 
@@ -979,13 +921,21 @@ with st.sidebar:
         default=sorted(age_values)
     )
 
-# apply filter to ALL dataframes
+# denominator after filters (this will be used later for % charts)
+total_respondents_filtered = df.loc[df[age_col].isin(age_filter)].shape[0]
+
+# apply filter to ALL derived dfs
 df_freq = df_freq.loc[df_freq[age_col].isin(age_filter)].copy()
 df_brand = df_brand.loc[df_brand[age_col].isin(age_filter)].copy()
 df_top3 = df_top3.loc[df_top3[age_col].isin(age_filter)].copy()
 df_pref = df_pref.loc[df_pref[age_col].isin(age_filter)].copy()
 df_disc = df_disc.loc[df_disc[age_col].isin(age_filter)].copy()
 df_occ = df_occ.loc[df_occ[age_col].isin(age_filter)].copy()
+df_perception = df_perception.loc[df_perception[age_col].isin(age_filter)].copy()
+df_motivation = df_motivation.loc[df_motivation[age_col].isin(age_filter)].copy()
+df_moment = df_moment.loc[df_moment[age_col].isin(age_filter)].copy()
+df_linkage = df_linkage.loc[df_linkage[age_col].isin(age_filter)].copy()
+df_product = df_product.loc[df_product[age_col].isin(age_filter)].copy()
 
 # =====================================================
 # TABS
@@ -1002,21 +952,73 @@ tabs = st.tabs([
 ])
 
 # =====================================================
+# COMMON CHART HELPERS
+# =====================================================
+def bar_chart_with_pct_labels(df_counts, y_col, x_col="Pct", color="#22D3EE", title="% of Total Respondents"):
+    """
+    Horizontal bar chart with % labels at end of each bar.
+    Expects df_counts columns:
+      - y_col: category
+      - Pct
+      - Count (optional but recommended for tooltip)
+    """
+
+    bars = alt.Chart(df_counts).mark_bar(color=color).encode(
+        x=alt.X(f"{x_col}:Q", title=title),
+        y=alt.Y(f"{y_col}:N", sort="-x"),
+        tooltip=[
+            alt.Tooltip(f"{y_col}:N", title=y_col),
+            alt.Tooltip("Pct:Q", format=".1f", title="%"),
+            alt.Tooltip("Count:Q", title="Count")
+        ] if "Count" in df_counts.columns else [
+            alt.Tooltip(f"{y_col}:N", title=y_col),
+            alt.Tooltip("Pct:Q", format=".1f", title="%")
+        ]
+    )
+
+    labels = alt.Chart(df_counts).mark_text(
+        align="left",
+        baseline="middle",
+        dx=6,
+        fontSize=12,
+        color="white"
+    ).encode(
+        x=f"{x_col}:Q",
+        y=alt.Y(f"{y_col}:N", sort="-x"),
+        text=alt.Text("Pct:Q", format=".1f")
+    ).transform_calculate(
+        PctLabel="format(datum.Pct, '.1f') + '%'"
+    ).encode(
+        text="PctLabel:N"
+    )
+
+    return bars + labels
+
+
+# =====================================================
 # TAB 1 — DEMOGRAPHICS
 # =====================================================
 with tabs[0]:
     st.subheader("Respondent Profile")
 
-    age_counts = df[age_col].value_counts().reset_index()
+    demo_df = df.loc[df[age_col].isin(age_filter)].copy()
+
+    age_counts = demo_df[age_col].value_counts().reset_index()
     age_counts.columns = ["Age", "Count"]
 
-    chart = alt.Chart(age_counts).mark_bar(color=PALETTE[0]).encode(
-        x="Count:Q",
-        y=alt.Y("Age:N", sort="-x"),
-        tooltip=["Age", "Count"]
+    if total_respondents_filtered > 0:
+        age_counts["Pct"] = (age_counts["Count"] / total_respondents_filtered) * 100
+    else:
+        age_counts["Pct"] = 0
+
+    chart = bar_chart_with_pct_labels(
+        df_counts=age_counts,
+        y_col="Age",
+        color=PALETTE[0]
     )
 
     st.altair_chart(chart, use_container_width=True)
+
 
 # =====================================================
 # TAB 2 — DISCOVERY
@@ -1027,13 +1029,20 @@ with tabs[1]:
     disc_counts = df_disc["discovery_norm"].value_counts().reset_index()
     disc_counts.columns = ["Channel", "Count"]
 
-    chart = alt.Chart(disc_counts).mark_bar(color=PALETTE[1]).encode(
-        x="Count:Q",
-        y=alt.Y("Channel:N", sort="-x"),
-        tooltip=["Channel", "Count"]
+    if total_respondents_filtered > 0:
+        disc_counts["Pct"] = (disc_counts["Count"] / total_respondents_filtered) * 100
+    else:
+        disc_counts["Pct"] = 0
+
+    chart = bar_chart_with_pct_labels(
+        df_counts=disc_counts,
+        y_col="Channel",
+        color=PALETTE[1]
     )
 
     st.altair_chart(chart, use_container_width=True)
+    st.caption("Note: Discovery is multi-select, so totals can exceed 100%.")
+
 
 # =====================================================
 # TAB 3 — CONSUMPTION
@@ -1047,19 +1056,18 @@ with tabs[2]:
     with c1:
         st.markdown("**How often consumers eat packaged sweets**")
 
-        freq_counts = (
-            df_freq["consumption_frequency_norm"]
-            .value_counts()
-            .reset_index()
-        )
+        freq_counts = df_freq["consumption_frequency_norm"].value_counts().reset_index()
         freq_counts.columns = ["Frequency", "Count"]
 
-        chart_freq = alt.Chart(freq_counts).mark_bar(
+        if total_respondents_filtered > 0:
+            freq_counts["Pct"] = (freq_counts["Count"] / total_respondents_filtered) * 100
+        else:
+            freq_counts["Pct"] = 0
+
+        chart_freq = bar_chart_with_pct_labels(
+            df_counts=freq_counts,
+            y_col="Frequency",
             color=PALETTE[2]
-        ).encode(
-            x="Count:Q",
-            y=alt.Y("Frequency:N", sort="-x"),
-            tooltip=["Frequency", "Count"]
         )
 
         st.altair_chart(chart_freq, use_container_width=True)
@@ -1068,19 +1076,18 @@ with tabs[2]:
     with c2:
         st.markdown("**When consumers eat packaged sweets**")
 
-        occ_counts = (
-            df_occ["occasion_norm"]
-            .value_counts()
-            .reset_index()
-        )
+        occ_counts = df_occ["occasion_norm"].value_counts().reset_index()
         occ_counts.columns = ["Occasion", "Count"]
 
-        chart_occ = alt.Chart(occ_counts).mark_bar(
+        if total_respondents_filtered > 0:
+            occ_counts["Pct"] = (occ_counts["Count"] / total_respondents_filtered) * 100
+        else:
+            occ_counts["Pct"] = 0
+
+        chart_occ = bar_chart_with_pct_labels(
+            df_counts=occ_counts,
+            y_col="Occasion",
             color=PALETTE[3]
-        ).encode(
-            x="Count:Q",
-            y=alt.Y("Occasion:N", sort="-x"),
-            tooltip=["Occasion", "Count"]
         )
 
         st.altair_chart(chart_occ, use_container_width=True)
@@ -1088,7 +1095,6 @@ with tabs[2]:
     st.markdown("---")
     st.subheader("Age Group vs Consumption Context")
 
-    # prepare heatmap data
     heat_df = (
         df_moment
         .groupby([age_col, "moment_norm"])
@@ -1096,25 +1102,42 @@ with tabs[2]:
         .reset_index(name="Count")
     )
 
+    if total_respondents_filtered > 0:
+        heat_df["Pct"] = (heat_df["Count"] / total_respondents_filtered) * 100
+    else:
+        heat_df["Pct"] = 0
+
     heatmap = alt.Chart(heat_df).mark_rect().encode(
         x=alt.X("moment_norm:N", title="Consumption Moment"),
         y=alt.Y(f"{age_col}:N", title="Age Group"),
-        color=alt.Color("Count:Q", scale=alt.Scale(scheme="yelloworangebrown")),
-        tooltip=[age_col, "moment_norm", "Count"]
+        color=alt.Color("Pct:Q", title="%", scale=alt.Scale(scheme="yelloworangebrown")),
+        tooltip=[
+            alt.Tooltip(f"{age_col}:N", title="Age Group"),
+            alt.Tooltip("moment_norm:N", title="Moment"),
+            alt.Tooltip("Pct:Q", format=".1f", title="%"),
+            alt.Tooltip("Count:Q", title="Count")
+        ]
     )
 
-    text = alt.Chart(heat_df).mark_text(baseline="middle").encode(
+    heat_text = alt.Chart(heat_df).mark_text(baseline="middle", fontSize=11).encode(
         x="moment_norm:N",
-        y=f"{age_col}:N",
-        text="Count:Q",
+        y=alt.Y(f"{age_col}:N"),
+        text=alt.Text("Pct:Q", format=".0f"),
         color=alt.condition(
-            alt.datum.Count > 0,
+            alt.datum.Pct > 8,
             alt.value("black"),
-            alt.value("transparent")
+            alt.value("white")
         )
+    ).transform_calculate(
+        Label="format(datum.Pct, '.0f') + '%'"
+    ).encode(
+        text="Label:N"
     )
 
-    st.altair_chart((heatmap + text), use_container_width=True)
+    st.altair_chart((heatmap + heat_text), use_container_width=True)
+
+    st.caption("Note: Consumption moments are multi-select, so totals can exceed 100%.")
+
 
 # =====================================================
 # TAB 4 — PERCEPTION
@@ -1122,42 +1145,42 @@ with tabs[2]:
 with tabs[3]:
     st.subheader("How consumers perceive GO DESi (Desi Popz)")
 
-    perception_counts = (
-        df_perception["perception_norm"]
-        .value_counts()
-        .reset_index()
-    )
+    perception_counts = df_perception["perception_norm"].value_counts().reset_index()
     perception_counts.columns = ["Perception", "Count"]
 
-    chart = alt.Chart(perception_counts).mark_bar(
+    if total_respondents_filtered > 0:
+        perception_counts["Pct"] = (perception_counts["Count"] / total_respondents_filtered) * 100
+    else:
+        perception_counts["Pct"] = 0
+
+    chart = bar_chart_with_pct_labels(
+        df_counts=perception_counts,
+        y_col="Perception",
         color=PALETTE[4]
-    ).encode(
-        x="Count:Q",
-        y=alt.Y("Perception:N", sort="-x"),
-        tooltip=["Perception", "Count"]
     )
 
     st.altair_chart(chart, use_container_width=True)
+    st.caption("Note: Perception can be multi-select, so totals can exceed 100%.")
+
 
 # =====================================================
-# TAB — MOTIVATION
+# TAB 5 — MOTIVATION
 # =====================================================
 with tabs[4]:
     st.subheader("Why consumers choose GO DESi")
 
-    motivation_counts = (
-        df_motivation["motivation_norm"]
-        .value_counts()
-        .reset_index()
-    )
+    motivation_counts = df_motivation["motivation_norm"].value_counts().reset_index()
     motivation_counts.columns = ["Motivation", "Count"]
 
-    chart = alt.Chart(motivation_counts).mark_bar(
+    if total_respondents_filtered > 0:
+        motivation_counts["Pct"] = (motivation_counts["Count"] / total_respondents_filtered) * 100
+    else:
+        motivation_counts["Pct"] = 0
+
+    chart = bar_chart_with_pct_labels(
+        df_counts=motivation_counts,
+        y_col="Motivation",
         color=PALETTE[2]
-    ).encode(
-        x="Count:Q",
-        y=alt.Y("Motivation:N", sort="-x"),
-        tooltip=["Motivation", "Count"]
     )
 
     st.altair_chart(chart, use_container_width=True)
@@ -1172,98 +1195,114 @@ with tabs[4]:
         .reset_index(name="Count")
     )
 
+    if total_respondents_filtered > 0:
+        mot_heat_df["Pct"] = (mot_heat_df["Count"] / total_respondents_filtered) * 100
+    else:
+        mot_heat_df["Pct"] = 0
+
     mot_heatmap = alt.Chart(mot_heat_df).mark_rect().encode(
         x=alt.X("motivation_norm:N", title="Motivation"),
         y=alt.Y(f"{age_col}:N", title="Age Group"),
-        color=alt.Color("Count:Q", scale=alt.Scale(scheme="tealblues")),
-        tooltip=[age_col, "motivation_norm", "Count"]
+        color=alt.Color("Pct:Q", title="%", scale=alt.Scale(scheme="tealblues")),
+        tooltip=[
+            alt.Tooltip(f"{age_col}:N", title="Age Group"),
+            alt.Tooltip("motivation_norm:N", title="Motivation"),
+            alt.Tooltip("Pct:Q", format=".1f", title="%"),
+            alt.Tooltip("Count:Q", title="Count")
+        ]
     )
 
-    mot_text = alt.Chart(mot_heat_df).mark_text(baseline="middle").encode(
+    mot_text = alt.Chart(mot_heat_df).mark_text(baseline="middle", fontSize=11).encode(
         x="motivation_norm:N",
-        y=f"{age_col}:N",
-        text="Count:Q",
+        y=alt.Y(f"{age_col}:N"),
+        text=alt.Text("Pct:Q", format=".0f"),
         color=alt.condition(
-            alt.datum.Count > 0,
+            alt.datum.Pct > 8,
             alt.value("black"),
-            alt.value("transparent")
+            alt.value("white")
         )
+    ).transform_calculate(
+        Label="format(datum.Pct, '.0f') + '%'"
+    ).encode(
+        text="Label:N"
     )
 
     st.altair_chart((mot_heatmap + mot_text), use_container_width=True)
 
+    st.caption("Note: Motivation is multi-select, so totals can exceed 100%.")
+
+
 # =====================================================
-# TAB — SWEETS AWARENESS
+# TAB 6 — SWEETS AWARENESS
 # =====================================================
 with tabs[5]:
     st.subheader("Other packaged Indian sweet brands consumers are aware of")
 
-    awareness_counts = (
-        df_brand["brand_awareness_norm"]
-        .value_counts()
-        .reset_index()
-    )
+    awareness_counts = df_brand["brand_awareness_norm"].value_counts().reset_index()
     awareness_counts.columns = ["Brand", "Mentions"]
 
-    chart = alt.Chart(awareness_counts).mark_bar(
+    awareness_counts["Count"] = awareness_counts["Mentions"]
+
+    if total_respondents_filtered > 0:
+        awareness_counts["Pct"] = (awareness_counts["Mentions"] / total_respondents_filtered) * 100
+    else:
+        awareness_counts["Pct"] = 0
+
+    chart = bar_chart_with_pct_labels(
+        df_counts=awareness_counts,
+        y_col="Brand",
         color=PALETTE[3]
-    ).encode(
-        x="Mentions:Q",
-        y=alt.Y("Brand:N", sort="-x"),
-        tooltip=["Brand", "Mentions"]
     )
 
     st.altair_chart(chart, use_container_width=True)
+    st.caption("Note: Awareness is multi-select, so totals can exceed 100%.")
+
 
 # =====================================================
-# TAB — SWEETS PREFERENCE
+# TAB 7 — SWEETS PREFERENCE
 # =====================================================
 with tabs[6]:
     st.subheader("Preferred packaged Indian sweets brand")
 
-    pref_counts = (
-        df_pref["preferred_brand_norm"]
-        .value_counts()
-        .reset_index()
-    )
-    pref_counts.columns = ["Brand", "Preference Count"]
+    pref_counts = df_pref["preferred_brand_norm"].value_counts().reset_index()
+    pref_counts.columns = ["Brand", "Count"]
 
-    chart = alt.Chart(pref_counts).mark_bar(
+    if total_respondents_filtered > 0:
+        pref_counts["Pct"] = (pref_counts["Count"] / total_respondents_filtered) * 100
+    else:
+        pref_counts["Pct"] = 0
+
+    chart = bar_chart_with_pct_labels(
+        df_counts=pref_counts,
+        y_col="Brand",
         color=PALETTE[4]
-    ).encode(
-        x="Preference Count:Q",
-        y=alt.Y("Brand:N", sort="-x"),
-        tooltip=["Brand", "Preference Count"]
     )
 
     st.altair_chart(chart, use_container_width=True)
 
+
 # =====================================================
-# TAB — BRAND LINKAGE
+# TAB 8 — BRAND LINKAGE
 # =====================================================
 with tabs[7]:
     st.subheader("Awareness of GO DESi’s Indian sweets portfolio")
 
-    linkage_counts = (
-        df_linkage[linkage_col]
-        .value_counts()
-        .reset_index()
-    )
+    linkage_counts = df_linkage[linkage_col].value_counts().reset_index()
     linkage_counts.columns = ["Response", "Count"]
 
-    chart = alt.Chart(linkage_counts).mark_bar(
+    if total_respondents_filtered > 0:
+        linkage_counts["Pct"] = (linkage_counts["Count"] / total_respondents_filtered) * 100
+    else:
+        linkage_counts["Pct"] = 0
+
+    chart = bar_chart_with_pct_labels(
+        df_counts=linkage_counts,
+        y_col="Response",
         color=PALETTE[1]
-    ).encode(
-        x="Count:Q",
-        y=alt.Y("Response:N", sort="-x"),
-        tooltip=["Response", "Count"]
     )
 
     st.altair_chart(chart, use_container_width=True)
 
-    # =====================================================
-    # % AWARE OF SWEETS PORTFOLIO
-    # =====================================================
     yes_count = (df_linkage[linkage_col] == "Yes").sum()
     no_count = (df_linkage[linkage_col] == "No").sum()
     total_linkage = yes_count + no_count
@@ -1275,4 +1314,3 @@ with tabs[7]:
         f"**{pct_yes}%** of respondents know that **GO DESi also makes Indian sweets** "
         f"(Yes: {yes_count}, No: {no_count})"
     )
-
