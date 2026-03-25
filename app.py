@@ -6,21 +6,30 @@ import streamlit as st
 import altair as alt
 import re
 import os
+import plotly.express as px
 
 # =====================================================
-# PAGE CONFIG + THEME
+# PAGE CONFIG
 # =====================================================
-st.set_page_config(page_title="GO DESi – Consumer Insights", layout="wide")
+st.set_page_config(
+    page_title="GO DESi – Consumer Insights",
+    layout="wide"
+)
 
+# =====================================================
+# GLOBAL STYLING
+# =====================================================
 st.markdown("""
 <style>
-.block-container { padding-top: 0.8rem; }
-h1, h2 { color: #F59E0B !important; }
+.block-container {
+    padding-top: 0.5rem;
+}
+
+h1, h2 {
+    color: #F59E0B !important;
+}
 </style>
 """, unsafe_allow_html=True)
-
-st.title("GO DESi – Consumer Insights")
-st.caption("Source: Master Survey Sheet")
 
 PALETTE = ["#F59E0B", "#22D3EE", "#8B5CF6", "#34D399", "#F472B6"]
 
@@ -41,6 +50,47 @@ def load_master():
     return df
 
 df_raw = load_master()
+
+# =====================================================
+# HERO HEADER (Stable Version)
+# =====================================================
+
+total_respondents = len(df_raw)
+
+st.markdown(
+    """
+    <style>
+    .hero-box {
+        background-color: #F28C28;
+        padding: 16px 30px;
+        border-radius: 15px;
+        margin: 50px 0 40px 0;
+        color: white;
+    }
+    .hero-title {
+        font-size: 30px;
+        font-weight: 700;
+        margin-bottom: 0px;
+    }
+    .hero-sub {
+        font-size: 18px;
+        opacity: 0.95;
+        margin-top: 0px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    f"""
+    <div class="hero-box">
+        <div class="hero-title">Consumer Insights Dashboard</div>
+        <div class="hero-sub">Total Respondents: {total_respondents}</div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 # =====================================================
 # COLUMN MAPPING (BUSINESS MEANING)
@@ -636,20 +686,42 @@ INVALID_OCCASIONS = {
 
 df = df_raw.copy()
 
-# ---- Age ----
-df[age_col] = df[age_col].map(clean_text)
-df = df[df[age_col].notna()]
-df = df[~df[age_col].astype(str).str.strip().str.lower().isin(["n/a", "not responded", ""])]
+# Clean text (do NOT drop rows)
+df = df.apply(lambda col: col.map(clean_text))
 
-# ---- Gender ----
-df[gender_col] = df[gender_col].map(clean_text)
-df = df[df[gender_col].notna()]
-df = df[~df[gender_col].astype(str).str.strip().str.lower().isin(["not responded", ""])]
+# ---- Age Normalization ----
+def normalize_age(x):
+    x_low = str(x).strip().lower()
 
-# ---- When first heard ----
-df[heard_when_col] = df[heard_when_col].map(clean_text)
-df = df[df[heard_when_col].notna()]
-df = df[~df[heard_when_col].astype(str).str.strip().str.lower().isin(INVALID_HEARD_WHEN)]
+    # Map invalids to N/A bucket
+    if x_low in {"n/a", "not responded", "don't know", "dont know", ""}:
+        return "N/A"
+
+    # Merge Below 18 into Under 20
+    if x_low in {"below 18", "under 20"}:
+        return "Under 20"
+
+    return x
+
+df["age_norm"] = df[age_col].apply(normalize_age)
+
+def normalize_gender(x):
+    x_low = safe_text(x)
+
+    if x_low in ["male", "m"]:
+        return "Male"
+
+    if x_low in ["female", "f"]:
+        return "Female"
+
+    if x_low in ["n/a", "", "not responded"]:
+        return "N/A"
+
+    return "N/A"
+
+df["gender_norm"] = df[gender_col].apply(normalize_gender)
+
+df_master = df.copy()
 
 # ---- Product Category (explode BOTH) ----
 def expand_product(x):
@@ -892,56 +964,15 @@ df_occ = df_occ.dropna(subset=["occasion_norm"])
 # =====================================================
 # KPI (ONLY TOTAL RESPONDENTS)
 # =====================================================
-total_respondents = df.shape[0]
 
-st.metric(
-    label="Total Respondents",
-    value=f"{total_respondents}"
-)
-
-st.markdown("---")
-
-
-# =====================================================
-# APPLY SIDEBAR FILTERS CONSISTENTLY
-# =====================================================
-with st.sidebar:
-    st.header("Filters")
-
-    age_values = (
-        df[age_col]
-        .dropna()
-        .astype(str)
-        .unique()
-    )
-
-    age_filter = st.multiselect(
-        "Age group",
-        sorted(age_values),
-        default=sorted(age_values)
-    )
-
-# denominator after filters (this will be used later for % charts)
-total_respondents_filtered = df.loc[df[age_col].isin(age_filter)].shape[0]
-
-# apply filter to ALL derived dfs
-df_freq = df_freq.loc[df_freq[age_col].isin(age_filter)].copy()
-df_brand = df_brand.loc[df_brand[age_col].isin(age_filter)].copy()
-df_top3 = df_top3.loc[df_top3[age_col].isin(age_filter)].copy()
-df_pref = df_pref.loc[df_pref[age_col].isin(age_filter)].copy()
-df_disc = df_disc.loc[df_disc[age_col].isin(age_filter)].copy()
-df_occ = df_occ.loc[df_occ[age_col].isin(age_filter)].copy()
-df_perception = df_perception.loc[df_perception[age_col].isin(age_filter)].copy()
-df_motivation = df_motivation.loc[df_motivation[age_col].isin(age_filter)].copy()
-df_moment = df_moment.loc[df_moment[age_col].isin(age_filter)].copy()
-df_linkage = df_linkage.loc[df_linkage[age_col].isin(age_filter)].copy()
-df_product = df_product.loc[df_product[age_col].isin(age_filter)].copy()
+total_respondents = len(df_master)
 
 # =====================================================
 # TABS
 # =====================================================
 tabs = st.tabs([
     "Demographics",
+    "Gender Insights",
     "Discovery",
     "Consumption",
     "Perception",
@@ -965,7 +996,7 @@ def bar_chart_with_pct_labels(df_counts, y_col, x_col="Pct", color="#22D3EE", ti
 
     bars = alt.Chart(df_counts).mark_bar(color=color).encode(
         x=alt.X(f"{x_col}:Q", title=title),
-        y=alt.Y(f"{y_col}:N", sort="-x"),
+        y=alt.Y(f"{y_col}:N", sort=None),
         tooltip=[
             alt.Tooltip(f"{y_col}:N", title=y_col),
             alt.Tooltip("Pct:Q", format=".1f", title="%"),
@@ -994,46 +1025,329 @@ def bar_chart_with_pct_labels(df_counts, y_col, x_col="Pct", color="#22D3EE", ti
 
     return bars + labels
 
-
 # =====================================================
 # TAB 1 — DEMOGRAPHICS
 # =====================================================
 with tabs[0]:
+
     st.subheader("Respondent Profile")
 
-    demo_df = df.loc[df[age_col].isin(age_filter)].copy()
+    c1, c2 = st.columns(2)
 
-    age_counts = demo_df[age_col].value_counts().reset_index()
-    age_counts.columns = ["Age", "Count"]
+    with c1:
+        age_options = sorted(
+            df_master["age_norm"]
+            .dropna()
+            .unique()
+        )
 
-    if total_respondents_filtered > 0:
-        age_counts["Pct"] = (age_counts["Count"] / total_respondents_filtered) * 100
-    else:
-        age_counts["Pct"] = 0
+        age_tab_filter = st.multiselect(
+            "Filter by Age",
+            age_options,
+            default=age_options
+        )
 
-    chart = bar_chart_with_pct_labels(
-        df_counts=age_counts,
-        y_col="Age",
-        color=PALETTE[0]
+    with c2:
+        gender_options = sorted(
+            df_master[gender_col]
+            .dropna()
+            .unique()
+        )
+
+        gender_tab_filter = st.multiselect(
+            "Filter by Gender",
+            gender_options,
+            default=gender_options
+        )
+
+    # -------------------------------------------------
+    # FILTERED DATA
+    # -------------------------------------------------
+    demo_df = df_master.copy()
+
+    demo_df = demo_df[
+        demo_df["age_norm"].isin(age_tab_filter) &
+        demo_df[gender_col].isin(gender_tab_filter)
+    ]
+
+    INVALID_AGES = {
+        "n/a",
+        "not responded",
+        "don't know",
+        "dont know",
+        ""
+    }
+
+    demo_df = demo_df[
+        demo_df["age_norm"].notna() &
+        ~demo_df["age_norm"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .isin(INVALID_AGES)
+    ]
+
+    responded_count = demo_df.shape[0]
+
+    st.metric(
+        label="Responded to this question",
+        value=f"{responded_count}"
     )
 
-    st.altair_chart(chart, use_container_width=True)
+    if responded_count == 0:
+        st.warning("No responses available.")
+    else:
 
+        # -------------------------------------------------
+        # AGE COUNTS
+        # -------------------------------------------------
+        age_counts = (
+            demo_df["age_norm"]
+            .value_counts()
+            .reset_index()
+        )
+
+        age_counts.columns = ["Age", "Count"]
+
+        age_counts["Pct"] = (
+            age_counts["Count"] / responded_count * 100
+        )
+
+        # Sort highest to lowest
+        age_counts = age_counts.sort_values(
+            "Count",
+            ascending=False
+        )
+
+        # -------------------------------------------------
+        # PLOTLY BAR CHART
+        # -------------------------------------------------
+        fig = px.bar(
+            age_counts,
+            x="Pct",
+            y="Age",
+            orientation="h",
+            text="Pct",
+            color_discrete_sequence=[PALETTE[0]]
+        )
+
+        fig.update_traces(
+            texttemplate="%{text:.1f}%",
+            textposition="outside",
+            cliponaxis=False,
+            width= 0.8
+        )
+
+        fig.update_layout(
+            height=260,        # tighter canvas
+            bargap=0.01,       # almost no vertical gap
+            xaxis_title="% of Respondents",
+            yaxis_title="Age Group",
+            showlegend=False,
+            margin=dict(t=10, b=10, l=10, r=10)
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
 
 # =====================================================
-# TAB 2 — DISCOVERY
+# TAB 2 — GENDER INSIGHTS
 # =====================================================
+
 with tabs[1]:
-    st.subheader("How customers discovered GO DESi")
 
-    disc_counts = df_disc["discovery_norm"].value_counts().reset_index()
+    st.subheader("Respondent Gender Profile")
+
+    # -------------------------------------------------
+    # BASE RESPONSES (DO NOT CHANGE WITH FILTERS)
+    # -------------------------------------------------
+    base_gender_df = df_master[
+        df_master["gender_norm"].isin(["Male", "Female"])
+    ]
+
+    responded_count = base_gender_df.shape[0]
+
+    st.markdown(
+        f"**Responded to this question – {responded_count}**"
+    )
+
+    # -------------------------------------------------
+    # AGE FILTER (VISUAL ONLY)
+    # -------------------------------------------------
+    age_options = sorted(
+        df_master["age_norm"]
+        .dropna()
+        .unique()
+    )
+
+    default_ages = [a for a in age_options if a != "N/A"]
+
+    selected_ages = st.multiselect(
+        "Filter by Age Group",
+        age_options,
+        default=default_ages
+    )
+
+    # Filtered dataset for charts only
+    gender_df = base_gender_df[
+        base_gender_df["age_norm"].isin(selected_ages)
+    ]
+
+    col1, col2 = st.columns(2)
+
+    # =====================================================
+    # LEFT — GENDER DONUT (PLOTLY)
+    # =====================================================
+    with col1:
+
+        st.markdown("### Gender Distribution")
+
+        gender_counts = (
+            base_gender_df["gender_norm"]
+            .value_counts()
+            .reindex(["Female", "Male"], fill_value=0)
+            .reset_index()
+        )
+
+        gender_counts.columns = ["Gender", "Count"]
+
+        fig = px.pie(
+            gender_counts,
+            names="Gender",
+            values="Count",
+            hole=0.5,
+            color="Gender",
+            color_discrete_map={
+                "Female": PALETTE[1],
+                "Male": PALETTE[0]
+            }
+        )
+
+        fig.update_traces(
+            textposition="inside",
+            textinfo="percent",
+            insidetextfont=dict(size=16),
+        )
+
+        fig.update_layout(
+            height=350,
+            showlegend=True,
+            margin=dict(t=20, b=20, l=20, r=20)
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # =====================================================
+    # RIGHT — AGE-WISE GENDER SPLIT (PLOTLY)
+    # =====================================================
+    with col2:
+
+        st.markdown("### Age-wise Gender Split")
+
+        # Force all combinations (so 0% shows)
+        full_index = pd.MultiIndex.from_product(
+            [selected_ages, ["Female", "Male"]],
+            names=["age_norm", "gender_norm"]
+        )
+
+        age_gender_df = (
+            gender_df
+            .groupby(["age_norm", "gender_norm"])
+            .size()
+            .reindex(full_index, fill_value=0)
+            .reset_index(name="Count")
+        )
+
+        age_gender_df["Pct"] = (
+            age_gender_df["Count"] / responded_count * 100
+        )
+
+        fig = px.bar(
+            age_gender_df,
+            x="age_norm",
+            y="Pct",
+            color="gender_norm",
+            barmode="group",
+            category_orders={"age_norm": selected_ages},
+            color_discrete_map={
+                "Female": PALETTE[1],
+                "Male": PALETTE[0]
+            }
+        )
+
+        fig.update_traces(
+            texttemplate="%{y:.1f}%",
+            textposition="outside",
+            cliponaxis=False
+        )
+
+        fig.update_layout(
+            height=450,
+            yaxis_title="% of Respondents",
+            xaxis_title="Age Group",
+            legend_title="Gender",
+            margin=dict(t=20, b=20, l=20, r=20)
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+# =====================================================
+# TAB 3 — DISCOVERY
+# =====================================================
+with tabs[2]:
+
+    # -----------------------------
+    # FILTERS
+    # -----------------------------
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df["age"].dropna().unique().tolist())
+        )
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df["gender"].dropna().unique().tolist())
+        )
+
+    # -----------------------------
+    # APPLY FILTERS
+    # -----------------------------
+    df_disc_filtered = df_disc.copy()
+
+    if age_filter != "All":
+        df_disc_filtered = df_disc_filtered[df_disc_filtered["age"] == age_filter]
+
+    if gender_filter != "All":
+        df_disc_filtered = df_disc_filtered[df_disc_filtered["gender"] == gender_filter]
+
+    # -----------------------------
+    # RESPONDENTS
+    # -----------------------------
+    respondents = df_disc_filtered.shape[0]
+
+    # -----------------------------
+    # HEADER (same as Gender tab)
+    # -----------------------------
+    st.subheader("How customers discovered GO DESi")
+    st.caption(f"Respondents: {respondents}")
+
+    # -----------------------------
+    # AGGREGATION
+    # -----------------------------
+    disc_counts = df_disc_filtered["discovery_norm"].value_counts().reset_index()
     disc_counts.columns = ["Channel", "Count"]
 
-    if total_respondents_filtered > 0:
-        disc_counts["Pct"] = (disc_counts["Count"] / total_respondents_filtered) * 100
+    if respondents > 0:
+        disc_counts["Pct"] = (disc_counts["Count"] / respondents) * 100
     else:
         disc_counts["Pct"] = 0
 
+    # -----------------------------
+    # CHART
+    # -----------------------------
     chart = bar_chart_with_pct_labels(
         df_counts=disc_counts,
         y_col="Channel",
@@ -1041,118 +1355,231 @@ with tabs[1]:
     )
 
     st.altair_chart(chart, use_container_width=True)
+
     st.caption("Note: Discovery is multi-select, so totals can exceed 100%.")
 
-
 # =====================================================
-# TAB 3 — CONSUMPTION
+# TAB 3 — DISCOVERY
 # =====================================================
 with tabs[2]:
-    st.subheader("Packaged Sweets Consumption Behaviour")
 
+    # Filters
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df_disc["age"].dropna().unique()),
+            key="age_tab3"
+        )
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df_disc["gender"].dropna().unique()),
+            key="gender_tab3"
+        )
+
+    # Apply filters
+    df_filtered = df_disc.copy()
+
+    if age_filter != "All":
+        df_filtered = df_filtered[df_filtered["age"] == age_filter]
+
+    if gender_filter != "All":
+        df_filtered = df_filtered[df_filtered["gender"] == gender_filter]
+
+    # Respondents
+    respondents = df_filtered.shape[0]
+
+    # Header
+    st.subheader("How customers discovered GO DESi")
+    st.caption(f"Respondents: {respondents}")
+
+    # Aggregation
+    disc_counts = df_filtered["discovery_norm"].value_counts().reset_index()
+    disc_counts.columns = ["Channel", "Count"]
+
+    disc_counts["Pct"] = (disc_counts["Count"] / respondents) * 100 if respondents > 0 else 0
+
+    # Chart
+    chart = bar_chart_with_pct_labels(
+        df_counts=disc_counts,
+        y_col="Channel",
+        color=PALETTE[1]
+    )
+
+    st.altair_chart(chart, use_container_width=True)
+
+    st.caption("Note: Discovery is multi-select, so totals can exceed 100%.")
+
+# =====================================================
+# TAB 4 — CONSUMPTION
+# =====================================================
+with tabs[3]:
+
+    # -----------------------------
+    # FILTERS (use df_master)
+    # -----------------------------
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df_master["age_norm"].dropna().unique()),
+            key="age_tab4"
+        )
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df_master["gender_norm"].dropna().unique()),
+            key="gender_tab4"
+        )
+
+    # -----------------------------
+    # APPLY FILTERS
+    # -----------------------------
+    df_freq_f = df_freq.copy()
+    df_occ_f = df_occ.copy()
+
+    if age_filter != "All":
+        df_freq_f = df_freq_f[df_freq_f["age_norm"] == age_filter]
+        df_occ_f = df_occ_f[df_occ_f["age_norm"] == age_filter]
+
+    if gender_filter != "All":
+        df_freq_f = df_freq_f[df_freq_f["gender_norm"] == gender_filter]
+        df_occ_f = df_occ_f[df_occ_f["gender_norm"] == gender_filter]
+
+    # -----------------------------
+    # RESPONDENTS (base = freq)
+    # -----------------------------
+    respondents = df_freq_f.shape[0]
+
+    st.subheader("Packaged Sweets Consumption Behaviour")
+    st.caption(f"Respondents: {respondents}")
+
+    # -----------------------------
+    # FREQUENCY
+    # -----------------------------
+    freq_counts = df_freq_f["consumption_frequency_norm"].value_counts().reset_index()
+    freq_counts.columns = ["Frequency", "Count"]
+    freq_counts["Pct"] = (freq_counts["Count"] / respondents) * 100 if respondents > 0 else 0
+
+    chart1 = bar_chart_with_pct_labels(freq_counts, "Frequency", color=PALETTE[2])
+
+    # -----------------------------
+    # OCCASION (multi-select)
+    # -----------------------------
+    occ_counts = df_occ_f["occasion_norm"].value_counts().reset_index()
+    occ_counts.columns = ["Occasion", "Count"]
+    occ_counts["Pct"] = (occ_counts["Count"] / respondents) * 100 if respondents > 0 else 0
+
+    chart2 = bar_chart_with_pct_labels(occ_counts, "Occasion", color=PALETTE[3])
+
+    # -----------------------------
+    # LAYOUT
+    # -----------------------------
     c1, c2 = st.columns(2)
 
-    # ---- Frequency of Consumption ----
     with c1:
-        st.markdown("**How often consumers eat packaged sweets**")
+        st.markdown("#### How often consumers eat packaged sweets")
+        st.altair_chart(chart1, use_container_width=True)
 
-        freq_counts = df_freq["consumption_frequency_norm"].value_counts().reset_index()
-        freq_counts.columns = ["Frequency", "Count"]
-
-        if total_respondents_filtered > 0:
-            freq_counts["Pct"] = (freq_counts["Count"] / total_respondents_filtered) * 100
-        else:
-            freq_counts["Pct"] = 0
-
-        chart_freq = bar_chart_with_pct_labels(
-            df_counts=freq_counts,
-            y_col="Frequency",
-            color=PALETTE[2]
-        )
-
-        st.altair_chart(chart_freq, use_container_width=True)
-
-    # ---- Consumption Occasions ----
     with c2:
-        st.markdown("**When consumers eat packaged sweets**")
+        st.markdown("#### When consumers eat packaged sweets")
+        st.altair_chart(chart2, use_container_width=True)
 
-        occ_counts = df_occ["occasion_norm"].value_counts().reset_index()
-        occ_counts.columns = ["Occasion", "Count"]
-
-        if total_respondents_filtered > 0:
-            occ_counts["Pct"] = (occ_counts["Count"] / total_respondents_filtered) * 100
-        else:
-            occ_counts["Pct"] = 0
-
-        chart_occ = bar_chart_with_pct_labels(
-            df_counts=occ_counts,
-            y_col="Occasion",
-            color=PALETTE[3]
-        )
-
-        st.altair_chart(chart_occ, use_container_width=True)
-
+    # -----------------------------
+    # HEATMAP
+    # -----------------------------
     st.markdown("---")
     st.subheader("Age Group vs Consumption Context")
 
     heat_df = (
-        df_moment
-        .groupby([age_col, "moment_norm"])
+        df_occ_f.groupby(["age_norm", "occasion_norm"])
         .size()
         .reset_index(name="Count")
     )
 
-    if total_respondents_filtered > 0:
-        heat_df["Pct"] = (heat_df["Count"] / total_respondents_filtered) * 100
-    else:
-        heat_df["Pct"] = 0
+    heat_df["Pct"] = (heat_df["Count"] / respondents) * 100 if respondents > 0 else 0
 
     heatmap = alt.Chart(heat_df).mark_rect().encode(
-        x=alt.X("moment_norm:N", title="Consumption Moment"),
-        y=alt.Y(f"{age_col}:N", title="Age Group"),
-        color=alt.Color("Pct:Q", title="%", scale=alt.Scale(scheme="yelloworangebrown")),
-        tooltip=[
-            alt.Tooltip(f"{age_col}:N", title="Age Group"),
-            alt.Tooltip("moment_norm:N", title="Moment"),
-            alt.Tooltip("Pct:Q", format=".1f", title="%"),
-            alt.Tooltip("Count:Q", title="Count")
-        ]
+        x=alt.X("occasion_norm:N", title="Consumption Moment"),
+        y=alt.Y("age_norm:N", title="Age Group"),
+        color=alt.Color("Pct:Q", scale=alt.Scale(scheme="tealblues")),
+        tooltip=["age_norm", "occasion_norm", "Pct", "Count"]
     )
 
-    heat_text = alt.Chart(heat_df).mark_text(baseline="middle", fontSize=11).encode(
-        x="moment_norm:N",
-        y=alt.Y(f"{age_col}:N"),
-        text=alt.Text("Pct:Q", format=".0f"),
-        color=alt.condition(
-            alt.datum.Pct > 8,
-            alt.value("black"),
-            alt.value("white")
+    st.altair_chart(heatmap, use_container_width=True)
+
+    st.caption("Note: Multi-select responses may exceed 100%.")
+
+# =====================================================
+# TAB 5 — PERCEPTION
+# =====================================================
+with tabs[4]:
+
+    # -----------------------------
+    # FILTERS (use normalized cols)
+    # -----------------------------
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df_master["age_norm"].dropna().unique()),
+            key="age_tab5"
         )
-    ).transform_calculate(
-        Label="format(datum.Pct, '.0f') + '%'"
-    ).encode(
-        text="Label:N"
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df_master["gender_norm"].dropna().unique()),
+            key="gender_tab5"
+        )
+
+    # -----------------------------
+    # APPLY FILTERS
+    # -----------------------------
+    df_filtered = df_perception.copy()
+
+    if age_filter != "All":
+        df_filtered = df_filtered[df_filtered["age_norm"] == age_filter]
+
+    if gender_filter != "All":
+        df_filtered = df_filtered[df_filtered["gender_norm"] == gender_filter]
+
+    # -----------------------------
+    # RESPONDENTS
+    # -----------------------------
+    respondents = df_filtered.shape[0]
+
+    # -----------------------------
+    # HEADER
+    # -----------------------------
+    st.subheader("How consumers perceive GO DESi (Desi Popz)")
+    st.caption(f"Respondents: {respondents}")
+
+    # -----------------------------
+    # AGGREGATION
+    # -----------------------------
+    perception_counts = (
+        df_filtered["perception_norm"]
+        .value_counts()
+        .reset_index()
     )
 
-    st.altair_chart((heatmap + heat_text), use_container_width=True)
-
-    st.caption("Note: Consumption moments are multi-select, so totals can exceed 100%.")
-
-
-# =====================================================
-# TAB 4 — PERCEPTION
-# =====================================================
-with tabs[3]:
-    st.subheader("How consumers perceive GO DESi (Desi Popz)")
-
-    perception_counts = df_perception["perception_norm"].value_counts().reset_index()
     perception_counts.columns = ["Perception", "Count"]
 
-    if total_respondents_filtered > 0:
-        perception_counts["Pct"] = (perception_counts["Count"] / total_respondents_filtered) * 100
-    else:
-        perception_counts["Pct"] = 0
+    perception_counts["Pct"] = (
+        perception_counts["Count"] / respondents * 100
+        if respondents > 0 else 0
+    )
 
+    # -----------------------------
+    # CHART
+    # -----------------------------
     chart = bar_chart_with_pct_labels(
         df_counts=perception_counts,
         y_col="Perception",
@@ -1160,23 +1587,74 @@ with tabs[3]:
     )
 
     st.altair_chart(chart, use_container_width=True)
-    st.caption("Note: Perception can be multi-select, so totals can exceed 100%.")
 
+    st.caption("Note: Perception is multi-select, so totals can exceed 100%.")
 
 # =====================================================
-# TAB 5 — MOTIVATION
+# TAB 6 — MOTIVATION
 # =====================================================
-with tabs[4]:
+with tabs[5]:
+
+    # -----------------------------
+    # FILTERS (normalized cols)
+    # -----------------------------
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df_master["age_norm"].dropna().unique()),
+            key="age_tab6"
+        )
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df_master["gender_norm"].dropna().unique()),
+            key="gender_tab6"
+        )
+
+    # -----------------------------
+    # APPLY FILTERS
+    # -----------------------------
+    df_filtered = df_motivation.copy()
+
+    if age_filter != "All":
+        df_filtered = df_filtered[df_filtered["age_norm"] == age_filter]
+
+    if gender_filter != "All":
+        df_filtered = df_filtered[df_filtered["gender_norm"] == gender_filter]
+
+    # -----------------------------
+    # RESPONDENTS
+    # -----------------------------
+    respondents = df_filtered.shape[0]
+
+    # -----------------------------
+    # HEADER
+    # -----------------------------
     st.subheader("Why consumers choose GO DESi")
+    st.caption(f"Respondents: {respondents}")
 
-    motivation_counts = df_motivation["motivation_norm"].value_counts().reset_index()
+    # -----------------------------
+    # AGGREGATION
+    # -----------------------------
+    motivation_counts = (
+        df_filtered["motivation_norm"]
+        .value_counts()
+        .reset_index()
+    )
+
     motivation_counts.columns = ["Motivation", "Count"]
 
-    if total_respondents_filtered > 0:
-        motivation_counts["Pct"] = (motivation_counts["Count"] / total_respondents_filtered) * 100
-    else:
-        motivation_counts["Pct"] = 0
+    motivation_counts["Pct"] = (
+        motivation_counts["Count"] / respondents * 100
+        if respondents > 0 else 0
+    )
 
+    # -----------------------------
+    # CHART
+    # -----------------------------
     chart = bar_chart_with_pct_labels(
         df_counts=motivation_counts,
         y_col="Motivation",
@@ -1185,69 +1663,100 @@ with tabs[4]:
 
     st.altair_chart(chart, use_container_width=True)
 
+    # -----------------------------
+    # HEATMAP (AGE vs MOTIVATION)
+    # -----------------------------
     st.markdown("---")
     st.subheader("Age Group vs Purchase Motivation")
 
-    mot_heat_df = (
-        df_motivation
-        .groupby([age_col, "motivation_norm"])
+    heat_df = (
+        df_filtered
+        .groupby(["age_norm", "motivation_norm"])
         .size()
         .reset_index(name="Count")
     )
 
-    if total_respondents_filtered > 0:
-        mot_heat_df["Pct"] = (mot_heat_df["Count"] / total_respondents_filtered) * 100
-    else:
-        mot_heat_df["Pct"] = 0
+    heat_df["Pct"] = (
+        heat_df["Count"] / respondents * 100
+        if respondents > 0 else 0
+    )
 
-    mot_heatmap = alt.Chart(mot_heat_df).mark_rect().encode(
+    heatmap = alt.Chart(heat_df).mark_rect().encode(
         x=alt.X("motivation_norm:N", title="Motivation"),
-        y=alt.Y(f"{age_col}:N", title="Age Group"),
-        color=alt.Color("Pct:Q", title="%", scale=alt.Scale(scheme="tealblues")),
-        tooltip=[
-            alt.Tooltip(f"{age_col}:N", title="Age Group"),
-            alt.Tooltip("motivation_norm:N", title="Motivation"),
-            alt.Tooltip("Pct:Q", format=".1f", title="%"),
-            alt.Tooltip("Count:Q", title="Count")
-        ]
+        y=alt.Y("age_norm:N", title="Age Group"),
+        color=alt.Color("Pct:Q", scale=alt.Scale(scheme="tealblues")),
+        tooltip=["age_norm", "motivation_norm", "Pct", "Count"]
     )
 
-    mot_text = alt.Chart(mot_heat_df).mark_text(baseline="middle", fontSize=11).encode(
-        x="motivation_norm:N",
-        y=alt.Y(f"{age_col}:N"),
-        text=alt.Text("Pct:Q", format=".0f"),
-        color=alt.condition(
-            alt.datum.Pct > 8,
-            alt.value("black"),
-            alt.value("white")
-        )
-    ).transform_calculate(
-        Label="format(datum.Pct, '.0f') + '%'"
-    ).encode(
-        text="Label:N"
-    )
-
-    st.altair_chart((mot_heatmap + mot_text), use_container_width=True)
+    st.altair_chart(heatmap, use_container_width=True)
 
     st.caption("Note: Motivation is multi-select, so totals can exceed 100%.")
 
+# =====================================================
+# TAB 7 — SWEETS AWARENESS
+# =====================================================
+with tabs[6]:
 
-# =====================================================
-# TAB 6 — SWEETS AWARENESS
-# =====================================================
-with tabs[5]:
+    # -----------------------------
+    # FILTERS (normalized cols)
+    # -----------------------------
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df_master["age_norm"].dropna().unique()),
+            key="age_tab7"
+        )
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df_master["gender_norm"].dropna().unique()),
+            key="gender_tab7"
+        )
+
+    # -----------------------------
+    # APPLY FILTERS
+    # -----------------------------
+    df_filtered = df_brand.copy()
+
+    if age_filter != "All":
+        df_filtered = df_filtered[df_filtered["age_norm"] == age_filter]
+
+    if gender_filter != "All":
+        df_filtered = df_filtered[df_filtered["gender_norm"] == gender_filter]
+
+    # -----------------------------
+    # RESPONDENTS
+    # -----------------------------
+    respondents = df_filtered.shape[0]
+
+    # -----------------------------
+    # HEADER
+    # -----------------------------
     st.subheader("Other packaged Indian sweet brands consumers are aware of")
+    st.caption(f"Respondents: {respondents}")
 
-    awareness_counts = df_brand["brand_awareness_norm"].value_counts().reset_index()
-    awareness_counts.columns = ["Brand", "Mentions"]
+    # -----------------------------
+    # AGGREGATION
+    # -----------------------------
+    awareness_counts = (
+        df_filtered["brand_awareness_norm"]
+        .value_counts()
+        .reset_index()
+    )
 
-    awareness_counts["Count"] = awareness_counts["Mentions"]
+    awareness_counts.columns = ["Brand", "Count"]
 
-    if total_respondents_filtered > 0:
-        awareness_counts["Pct"] = (awareness_counts["Mentions"] / total_respondents_filtered) * 100
-    else:
-        awareness_counts["Pct"] = 0
+    awareness_counts["Pct"] = (
+        awareness_counts["Count"] / respondents * 100
+        if respondents > 0 else 0
+    )
 
+    # -----------------------------
+    # CHART
+    # -----------------------------
     chart = bar_chart_with_pct_labels(
         df_counts=awareness_counts,
         y_col="Brand",
@@ -1255,23 +1764,74 @@ with tabs[5]:
     )
 
     st.altair_chart(chart, use_container_width=True)
+
     st.caption("Note: Awareness is multi-select, so totals can exceed 100%.")
 
+# =====================================================
+# TAB 8 — SWEETS PREFERENCE
+# =====================================================
+with tabs[7]:
 
-# =====================================================
-# TAB 7 — SWEETS PREFERENCE
-# =====================================================
-with tabs[6]:
+    # -----------------------------
+    # FILTERS (normalized cols)
+    # -----------------------------
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df_master["age_norm"].dropna().unique()),
+            key="age_tab8"
+        )
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df_master["gender_norm"].dropna().unique()),
+            key="gender_tab8"
+        )
+
+    # -----------------------------
+    # APPLY FILTERS
+    # -----------------------------
+    df_filtered = df_pref.copy()
+
+    if age_filter != "All":
+        df_filtered = df_filtered[df_filtered["age_norm"] == age_filter]
+
+    if gender_filter != "All":
+        df_filtered = df_filtered[df_filtered["gender_norm"] == gender_filter]
+
+    # -----------------------------
+    # RESPONDENTS
+    # -----------------------------
+    respondents = df_filtered.shape[0]
+
+    # -----------------------------
+    # HEADER
+    # -----------------------------
     st.subheader("Preferred packaged Indian sweets brand")
+    st.caption(f"Respondents: {respondents}")
 
-    pref_counts = df_pref["preferred_brand_norm"].value_counts().reset_index()
+    # -----------------------------
+    # AGGREGATION
+    # -----------------------------
+    pref_counts = (
+        df_filtered["preferred_brand_norm"]
+        .value_counts()
+        .reset_index()
+    )
+
     pref_counts.columns = ["Brand", "Count"]
 
-    if total_respondents_filtered > 0:
-        pref_counts["Pct"] = (pref_counts["Count"] / total_respondents_filtered) * 100
-    else:
-        pref_counts["Pct"] = 0
+    pref_counts["Pct"] = (
+        pref_counts["Count"] / respondents * 100
+        if respondents > 0 else 0
+    )
 
+    # -----------------------------
+    # CHART
+    # -----------------------------
     chart = bar_chart_with_pct_labels(
         df_counts=pref_counts,
         y_col="Brand",
@@ -1280,21 +1840,71 @@ with tabs[6]:
 
     st.altair_chart(chart, use_container_width=True)
 
+# =====================================================
+# TAB 9 — BRAND LINKAGE
+# =====================================================
+with tabs[8]:
 
-# =====================================================
-# TAB 8 — BRAND LINKAGE
-# =====================================================
-with tabs[7]:
+    # -----------------------------
+    # FILTERS (normalized cols)
+    # -----------------------------
+    col1, col2 = st.columns(2)
+
+    with col1:
+        age_filter = st.selectbox(
+            "Age",
+            ["All"] + sorted(df_master["age_norm"].dropna().unique()),
+            key="age_tab9"
+        )
+
+    with col2:
+        gender_filter = st.selectbox(
+            "Gender",
+            ["All"] + sorted(df_master["gender_norm"].dropna().unique()),
+            key="gender_tab9"
+        )
+
+    # -----------------------------
+    # APPLY FILTERS
+    # -----------------------------
+    df_filtered = df_linkage.copy()
+
+    if age_filter != "All":
+        df_filtered = df_filtered[df_filtered["age_norm"] == age_filter]
+
+    if gender_filter != "All":
+        df_filtered = df_filtered[df_filtered["gender_norm"] == gender_filter]
+
+    # -----------------------------
+    # RESPONDENTS
+    # -----------------------------
+    respondents = df_filtered.shape[0]
+
+    # -----------------------------
+    # HEADER
+    # -----------------------------
     st.subheader("Awareness of GO DESi’s Indian sweets portfolio")
+    st.caption(f"Respondents: {respondents}")
 
-    linkage_counts = df_linkage[linkage_col].value_counts().reset_index()
+    # -----------------------------
+    # AGGREGATION
+    # -----------------------------
+    linkage_counts = (
+        df_filtered[linkage_col]
+        .value_counts()
+        .reset_index()
+    )
+
     linkage_counts.columns = ["Response", "Count"]
 
-    if total_respondents_filtered > 0:
-        linkage_counts["Pct"] = (linkage_counts["Count"] / total_respondents_filtered) * 100
-    else:
-        linkage_counts["Pct"] = 0
+    linkage_counts["Pct"] = (
+        linkage_counts["Count"] / respondents * 100
+        if respondents > 0 else 0
+    )
 
+    # -----------------------------
+    # CHART
+    # -----------------------------
     chart = bar_chart_with_pct_labels(
         df_counts=linkage_counts,
         y_col="Response",
@@ -1303,11 +1913,14 @@ with tabs[7]:
 
     st.altair_chart(chart, use_container_width=True)
 
-    yes_count = (df_linkage[linkage_col] == "Yes").sum()
-    no_count = (df_linkage[linkage_col] == "No").sum()
-    total_linkage = yes_count + no_count
+    # -----------------------------
+    # SUMMARY INSIGHT
+    # -----------------------------
+    yes_count = (df_filtered[linkage_col] == "Yes").sum()
+    no_count = (df_filtered[linkage_col] == "No").sum()
+    total = yes_count + no_count
 
-    pct_yes = round((yes_count / total_linkage) * 100, 1) if total_linkage else 0
+    pct_yes = round((yes_count / total) * 100, 1) if total > 0 else 0
 
     st.markdown("---")
     st.markdown(
